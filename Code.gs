@@ -34,7 +34,7 @@ const EVENT_TITLE = 'Busy';
  * Format: YYYY-MM-DD
  * @type {string}
  */
-const SYNC_START_DATE = '2020-01-01';
+const SYNC_START_DATE = '2025-01-01'; // replace with new Date() to use today's date
 
 /**
  * A unique tag added to the description of script-generated events. This
