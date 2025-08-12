@@ -1,8 +1,7 @@
 /**
  * @fileoverview Google Apps Script to sync events from multiple source calendars
- * to a single destination calendar for sharing availability without revealing
- * private event details.
- * @version 1.2
+ * to a single destination calendar using a robust reconciliation model.
+ * @version 2.0
  */
 
 // --- CONFIGURATION ---
@@ -11,9 +10,11 @@
  * @type {string[]}
  */
 const SOURCE_CALENDAR_IDS = [
-  'primary.email@example.com',
-  'calendar_id_2@group.calendar.google.com',
-  'calendar_id_3@group.calendar.google.com'
+  "your_primary_email@example.com",
+  "source_calendar_1@group.calendar.google.com",
+  "source_calendar_2@group.calendar.google.com",
+  "source_calendar_3@group.calendar.google.com",
+  "source_calendar_4@import.calendar.google.com",
 ];
 
 /**
@@ -21,20 +22,21 @@ const SOURCE_CALENDAR_IDS = [
  * events will be created.
  * @type {string}
  */
-const DESTINATION_CALENDAR_ID = 'destination_calendar_id@group.calendar.google.com';
+const DESTINATION_CALENDAR_ID =
+  "destination_calendar_id@group.calendar.google.com";
 
 /**
  * The title for the events created on the destination calendar.
  * @type {string}
  */
-const EVENT_TITLE = 'Busy';
+const EVENT_TITLE = "Busy";
 
 /**
- * The earliest date the script should look for events to sync.
+ * The earliest date the script should look for events during the very first sync.
  * Format: YYYY-MM-DD
  * @type {string}
  */
-const SYNC_START_DATE = '2025-01-01'; // replace with new Date() to use today's date
+const SYNC_START_DATE = "2025-01-01";
 
 /**
  * A unique tag added to the description of script-generated events. This
@@ -42,29 +44,43 @@ const SYNC_START_DATE = '2025-01-01'; // replace with new Date() to use today's 
  * @type {string}
  * @const
  */
-const SYNC_TAG = 'sync-id:auto-generated';
+const SYNC_TAG = "sync-id:auto-generated";
 
 /**
  * The time in milliseconds to wait between creating/deleting events to avoid
- * hitting Google's API rate limits. 1500ms = 1.5 seconds.
+ * hitting Google's API rate limits. 1000ms = 1 second.
  * @type {number}
  * @const
  */
-const WAIT_TIME = 1500;
+const WAIT_TIME = 1000;
 
-
-// --- SCRIPT LOGIC (No need to edit below this line) ---
+// --- PRIMARY TRIGGER FUNCTIONS ---
 
 /**
- * Main function for frequent triggers (e.g., every hour).
- * Processes one recent batch of events to keep the calendar up-to-date.
- * Uses PropertiesService to maintain a cursor of its progress.
+ * Main function for frequent triggers (e.g., every 15 minutes).
+ * Processes a single batch of events. It includes logic to reset its sync
+ * cursor to the SYNC_START_DATE every night at 5 AM Central Time.
  */
 function processSyncBatch() {
   const properties = PropertiesService.getScriptProperties();
-  const destinationCalendar = CalendarApp.getCalendarById(DESTINATION_CALENDAR_ID);
 
-  let cursor = properties.getProperty('syncCursor');
+  // --- Nightly Cursor Reset Logic ---
+  const now = new Date();
+  const todayCt = Utilities.formatDate(now, "America/Chicago", "yyyy-MM-dd");
+  const hourCt = parseInt(
+    Utilities.formatDate(now, "America/Chicago", "H"),
+    10
+  );
+  const lastResetDate = properties.getProperty("lastResetDate");
+
+  if (hourCt === 5 && todayCt !== lastResetDate) {
+    Logger.log("Performing nightly cursor reset for 5 AM CT.");
+    properties.setProperty("syncCursor", SYNC_START_DATE);
+    properties.setProperty("lastResetDate", todayCt); // Mark that we've reset for today.
+  }
+  // --- End Reset Logic ---
+
+  let cursor = properties.getProperty("syncCursor");
   if (!cursor) {
     cursor = SYNC_START_DATE;
   }
@@ -73,32 +89,24 @@ function processSyncBatch() {
   let endTime = new Date(startTime);
   endTime.setDate(endTime.getDate() + 31); // Process a ~1 month chunk
 
-  const now = new Date();
-  if (endTime > now) {
-    endTime = now;
-  }
+  Logger.log(
+    `Processing batch from ${startTime.toLocaleDateString()} to ${endTime.toLocaleDateString()}`
+  );
+  reconcileBatch(startTime, endTime);
 
-  Logger.log(`Processing batch from ${startTime.toLocaleDateString()} to ${endTime.toLocaleDateString()}`);
-
-  deleteOrphanedEventsInBatch(destinationCalendar, startTime, endTime);
-  createMissingEventsInBatch(destinationCalendar, startTime, endTime);
-
-  properties.setProperty('syncCursor', endTime.toISOString());
-  Logger.log(`Sync batch complete. Next run will start from: ${endTime.toLocaleDateString()}`);
+  // Update the cursor for the next run.
+  properties.setProperty("syncCursor", endTime.toISOString());
+  Logger.log(
+    `Sync batch complete. Next run will start from: ${endTime.toLocaleDateString()}`
+  );
 }
 
 /**
- * Nightly function to do a full, comprehensive sync from the very beginning.
- * This acts as a safeguard to catch anything the batch processor might have missed.
+ * Standalone function for a full, comprehensive sync over a long period.
+ * Intended for manual execution or a periodic (e.g., weekly) trigger.
  */
 function runFullSync() {
-  Logger.log('--- Starting Nightly Full Sync ---');
-  const destinationCalendar = CalendarApp.getCalendarById(DESTINATION_CALENDAR_ID);
-  if (!destinationCalendar) {
-    Logger.log('Full Sync Aborted: Destination calendar not found.');
-    return;
-  }
-
+  Logger.log("--- Starting Full Manual Sync ---");
   let loopStartTime = new Date(SYNC_START_DATE);
   const today = new Date();
 
@@ -110,88 +118,106 @@ function runFullSync() {
       loopEndTime = today;
     }
 
-    Logger.log(`Full Sync | Processing batch from ${loopStartTime.toLocaleDateString()} to ${loopEndTime.toLocaleDateString()}`);
-    deleteOrphanedEventsInBatch(destinationCalendar, loopStartTime, loopEndTime);
-    createMissingEventsInBatch(destinationCalendar, loopStartTime, loopEndTime);
+    Logger.log(
+      `Full Sync | Processing batch from ${loopStartTime.toLocaleDateString()} to ${loopEndTime.toLocaleDateString()}`
+    );
+    reconcileBatch(loopStartTime, loopEndTime);
     loopStartTime = loopEndTime;
   }
 
-  Logger.log('--- Nightly Full Sync Complete ---');
+  Logger.log("--- Full Manual Sync Complete ---");
 }
 
+// --- CORE LOGIC ---
+
 /**
- * Creates missing events in the destination calendar for a given time window.
- * @param {GoogleAppsScript.Calendar.Calendar} destinationCalendar The destination calendar object.
+ * Reconciles events between source and destination calendars for a given time window.
+ * This is the core engine that handles creation, deletion, and updates.
  * @param {Date} startTime The start of the time window to process.
  * @param {Date} endTime The end of the time window to process.
  */
-function createMissingEventsInBatch(destinationCalendar, startTime, endTime) {
-  SOURCE_CALENDAR_IDS.forEach(sourceId => {
-    const sourceCalendar = CalendarApp.getCalendarById(sourceId);
-    if (sourceCalendar) {
-      const sourceEvents = sourceCalendar.getEvents(startTime, endTime);
-      sourceEvents.forEach(event => {
-        if (!event.isAllDayEvent()) {
-          const existingEvents = destinationCalendar.getEvents(event.getStartTime(), event.getEndTime(), {
-            search: EVENT_TITLE
-          });
-          if (existingEvents.length === 0) {
-            Logger.log(`CREATING event from ${sourceCalendar.getName()}`);
-            destinationCalendar.createEvent(EVENT_TITLE, event.getStartTime(), event.getEndTime(), {
-              description: SYNC_TAG
-            });
-            Utilities.sleep(WAIT_TIME);
-          }
-        }
-      });
-    }
-  });
-}
+function reconcileBatch(startTime, endTime) {
+  const destinationCalendar = CalendarApp.getCalendarById(
+    DESTINATION_CALENDAR_ID
+  );
+  if (!destinationCalendar) {
+    Logger.log("Reconciliation Aborted: Destination calendar not found.");
+    return;
+  }
 
-/**
- * Deletes orphaned, script-generated events from the destination calendar for a given time window.
- * @param {GoogleAppsScript.Calendar.Calendar} destinationCalendar The destination calendar object.
- * @param {Date} startTime The start of the time window to process.
- * @param {Date} endTime The end of the time window to process.
- */
-function deleteOrphanedEventsInBatch(destinationCalendar, startTime, endTime) {
-  const busyEvents = destinationCalendar.getEvents(startTime, endTime, {
-    search: EVENT_TITLE
-  });
-
-  busyEvents.forEach(busyEvent => {
-    // Only process events that have our script's tag.
-    if (busyEvent.getDescription().includes(SYNC_TAG)) {
-      let hasSourceEvent = false;
-      const busyStartTime = busyEvent.getStartTime();
-      const busyEndTime = busyEvent.getEndTime();
-
-      for (const sourceId of SOURCE_CALENDAR_IDS) {
-        const sourceCalendar = CalendarApp.getCalendarById(sourceId);
-        if (sourceCalendar) {
-          const potentialEvents = sourceCalendar.getEvents(busyStartTime, busyEndTime);
-          // Check if a non-all-day event exists in the source with the exact same time.
-          if (potentialEvents.some(e => e.getStartTime().getTime() === busyStartTime.getTime() && e.getEndTime().getTime() === busyEndTime.getTime() && !e.isAllDayEvent())) {
-            hasSourceEvent = true;
-            break; // Found a parent, no need to check other calendars.
-          }
-        }
-      }
-
-      if (!hasSourceEvent) {
-        Logger.log(`DELETING orphaned event at ${busyStartTime}`);
-        busyEvent.deleteEvent();
-        Utilities.sleep(WAIT_TIME);
+  // 1. Get all relevant events from all source calendars.
+  let allSourceEvents = [];
+  SOURCE_CALENDAR_IDS.forEach((id) => {
+    const sourceCal = CalendarApp.getCalendarById(id);
+    if (sourceCal) {
+      try {
+        const events = sourceCal.getEvents(startTime, endTime);
+        allSourceEvents = allSourceEvents.concat(
+          events.filter((e) => !e.isAllDayEvent())
+        );
+      } catch (e) {
+        Logger.log(
+          `Could not access calendar ${id}. It may be a permissions issue or the calendar was removed.`
+        );
       }
     }
   });
+
+  // 2. Get all script-generated events from the destination calendar.
+  let destinationEvents = destinationCalendar
+    .getEvents(startTime, endTime, { search: EVENT_TITLE })
+    .filter((e) => e.getDescription().includes(SYNC_TAG));
+
+  // 3. Reconcile: Find events to CREATE.
+  allSourceEvents.forEach((sourceEvent) => {
+    const sourceStartTimeMs = sourceEvent.getStartTime().getTime();
+    const sourceEndTimeMs = sourceEvent.getEndTime().getTime();
+
+    const matchingDestEventIndex = destinationEvents.findIndex(
+      (destEvent) =>
+        destEvent.getStartTime().getTime() === sourceStartTimeMs &&
+        destEvent.getEndTime().getTime() === sourceEndTimeMs
+    );
+
+    if (matchingDestEventIndex !== -1) {
+      // A matching event exists and is correctly synced. Remove it from our list
+      // of destination events so it won't be considered an orphan.
+      destinationEvents.splice(matchingDestEventIndex, 1);
+    } else {
+      // No matching event found. This is a new or updated event. Create it.
+      Logger.log(`CREATING event at ${sourceEvent.getStartTime()}`);
+      destinationCalendar.createEvent(
+        EVENT_TITLE,
+        sourceEvent.getStartTime(),
+        sourceEvent.getEndTime(),
+        {
+          description: SYNC_TAG,
+        }
+      );
+      Utilities.sleep(WAIT_TIME);
+    }
+  });
+
+  // 4. Reconcile: Find events to DELETE.
+  // Any events left in destinationEvents are orphans (their source was deleted or changed).
+  destinationEvents.forEach((orphanEvent) => {
+    Logger.log(`DELETING orphaned event at ${orphanEvent.getStartTime()}`);
+    orphanEvent.deleteEvent();
+    Utilities.sleep(WAIT_TIME);
+  });
 }
 
+// --- UTILITY FUNCTIONS ---
+
 /**
- * Utility function to reset the sync process.
- * Run this manually from the script editor to start the historical sync over from the beginning.
+ * Utility function to manually reset the sync process for the main batch processor.
+ * Run this from the script editor to force the next run of processSyncBatch
+ * to start from the SYNC_START_DATE.
  */
 function resetSync() {
-  PropertiesService.getScriptProperties().deleteProperty('syncCursor');
-  Logger.log('Sync cursor has been reset. The next run will start from the beginning.');
+  PropertiesService.getScriptProperties().deleteProperty("syncCursor");
+  PropertiesService.getScriptProperties().deleteProperty("lastResetDate");
+  Logger.log(
+    "Sync cursor has been reset. The next run of processSyncBatch will start from the beginning."
+  );
 }
