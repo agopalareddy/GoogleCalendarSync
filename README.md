@@ -51,6 +51,7 @@ In the `Code.gs` file, find the `CONFIGURATION` section at the top and replace t
 *   `DESTINATION_CALENDAR_ID`: Paste the Calendar ID of your "My Availability" calendar.
 *   `EVENT_TITLE`: Change the title of the synced events if you wish (e.g., "Busy", "Unavailable").
 *   `SYNC_START_DATE`: Set the earliest date the script should look for events. This prevents it from syncing very old events.
+*   `TIMEZONE`: Set your local timezone (e.g., "America/New_York", "Europe/London") to ensure the nightly reset happens at the correct time.
 
 ### **Step 6: Set Up the Trigger**
 
