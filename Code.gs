@@ -39,6 +39,13 @@ const EVENT_TITLE = "Busy";
 const SYNC_START_DATE = "2025-01-01";
 
 /**
+ * The IANA timezone name for the nightly reset check (e.g., "America/New_York", "Europe/London").
+ * This ensures the reset happens at the correct local time.
+ * @type {string}
+ */
+const TIMEZONE = "America/Chicago";
+
+/**
  * A unique tag added to the description of script-generated events. This
  * prevents the script from deleting manually created events on the destination calendar.
  * @type {string}
@@ -66,11 +73,8 @@ function processSyncBatch() {
 
   // --- Nightly Cursor Reset Logic ---
   const now = new Date();
-  const todayCt = Utilities.formatDate(now, "America/Chicago", "yyyy-MM-dd");
-  const hourCt = parseInt(
-    Utilities.formatDate(now, "America/Chicago", "H"),
-    10
-  );
+  const todayCt = Utilities.formatDate(now, TIMEZONE, "yyyy-MM-dd");
+  const hourCt = parseInt(Utilities.formatDate(now, TIMEZONE, "H"), 10);
   const lastResetDate = properties.getProperty("lastResetDate");
 
   if (hourCt === 5 && todayCt !== lastResetDate) {
