@@ -90,6 +90,21 @@ function processSyncBatch() {
   }
 
   let startTime = new Date(cursor);
+
+  // --- Future Cursor Check ---
+  const today = new Date();
+  const oneYearFromToday = new Date();
+  oneYearFromToday.setFullYear(oneYearFromToday.getFullYear() + 1);
+
+  if (startTime > oneYearFromToday) {
+    Logger.log(
+      "Sync cursor is more than a year in the future. Resetting to today."
+    );
+    startTime = today;
+    properties.setProperty("syncCursor", startTime.toISOString());
+  }
+  // --- End Future Cursor Check ---
+
   let endTime = new Date(startTime);
   endTime.setDate(endTime.getDate() + 31); // Process a ~1 month chunk
 
