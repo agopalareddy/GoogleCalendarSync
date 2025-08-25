@@ -1,13 +1,15 @@
 # **Google Calendar Availability Sync**
 
-A Google Apps Script to automatically sync events from multiple source calendars to a single "Availability" calendar. This script creates generic "Busy" or "Unavailable" blocks of time, allowing you to share your availability without revealing the private details of your appointments.
+A Google Apps Script to automatically sync events from multiple source calendars to a single "Availability" calendar. This script creates customizable availability blocks (e.g., "Personal", "Work", "Class") based on the source calendar, allowing you to share your availability without revealing the private details of your appointments.
 
 ## **Features**
 
 *   **One-Way Sync:** Copies events from multiple source calendars to one destination calendar.
-*   **Privacy-Focused:** Creates generic events, hiding original titles, descriptions, and guest lists.
+*   **Privacy-Focused:** Creates customizable events, hiding original titles, descriptions, and guest lists while showing relevant availability context.
+*   **Per-Calendar Event Naming:** Assigns custom event titles based on the source calendar (e.g., "Personal", "Work", "Class") instead of generic "Busy" titles.
+*   **Automatic Title Updates:** Gradually updates existing event titles to match the new per-calendar naming system without hitting API rate limits.
 *   **Robust Reconciliation:** A powerful reconciliation model accurately creates and deletes events, preventing duplicate or orphaned entries.
-*   **Automatic Deletion:** Automatically removes "Busy" blocks when the original event is deleted or its time is changed.
+*   **Automatic Deletion:** Automatically removes availability blocks when the original event is deleted or its time is changed.
 *   **Manual Event Protection:** Allows you to manually add events to the destination calendar without the script deleting them.
 *   **Resilient and Efficient:** Uses a batch processing model with a "sync cursor" to work within Google's execution time limits and pick up where it left off.
 *   **Automatic Nightly Reset:** The sync cursor automatically resets every morning, ensuring the script re-validates recent events and maintains long-term accuracy without needing a separate trigger.
@@ -49,7 +51,16 @@ In the `Code.gs` file, find the `CONFIGURATION` section at the top and replace t
 
 *   `SOURCE_CALENDAR_IDS`: Paste the Calendar IDs of your source calendars here.
 *   `DESTINATION_CALENDAR_ID`: Paste the Calendar ID of your "My Availability" calendar.
-*   `EVENT_TITLE`: Change the title of the synced events if you wish (e.g., "Busy", "Unavailable").
+*   `EVENT_TITLE`: The default title for synced events if no custom title is specified (e.g., "Busy", "Unavailable").
+*   `CALENDAR_NAMES`: (Optional) A mapping of calendar IDs to custom event titles. Example:
+    ```
+    const CALENDAR_NAMES = {
+      "your_personal_email@gmail.com": "Personal",
+      "work_calendar@group.calendar.google.com": "Work",
+      "school_calendar@group.calendar.google.com": "Class"
+    };
+    ```
+    Keys should match entries in `SOURCE_CALENDAR_IDS`. If a calendar ID is not found here, the script uses the `EVENT_TITLE`.
 *   `SYNC_START_DATE`: Set the earliest date the script should look for events. This prevents it from syncing very old events.
 *   `TIMEZONE`: Set your local timezone (e.g., "America/New_York", "Europe/London") to ensure the nightly reset happens at the correct time.
 
@@ -86,6 +97,17 @@ If you ever need to do a complete, comprehensive sync over a long period of time
 1.  In the script editor, select the function `runFullSync` from the dropdown menu at the top.
 2.  Click the **Run** button.
 3.  Check the **Execution log** to monitor its progress.
+
+### **Automatic Title Migration**
+
+When you add or modify the `CALENDAR_NAMES` configuration, the script will automatically update existing event titles over time:
+
+- **Existing Events**: Events created before configuring `CALENDAR_NAMES` will gradually get their titles updated to match the new per-calendar naming.
+- **New Events**: All new events will immediately use the correct custom titles.
+- **Rate Limiting**: The script updates only 1 event title per sync batch to avoid hitting Google's API rate limits.
+- **Migration Progress**: You can monitor the migration in the **Execution log** - look for "UPDATING event title" messages.
+
+This gradual approach ensures all events eventually have the correct titles without overwhelming the API.
 
 ### **Resetting the Sync**
 
