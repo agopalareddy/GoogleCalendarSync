@@ -32,6 +32,20 @@ const DESTINATION_CALENDAR_ID =
 const EVENT_TITLE = "Busy";
 
 /**
+ * A mapping of source calendar IDs to custom event titles on the destination calendar.
+ * Keys should match entries in SOURCE_CALENDAR_IDS. If a calendar ID is not found here,
+ * the script will fall back to the EVENT_TITLE constant.
+ * @type {Object<string, string>}
+ */
+const CALENDAR_NAMES = {
+  "your_primary_email@example.com": "Personal",
+  "source_calendar_1@group.calendar.google.com": "Work",
+  "source_calendar_2@group.calendar.google.com": "Busy",
+  "source_calendar_3@group.calendar.google.com": "Class",
+  "source_calendar_4@import.calendar.google.com": "Busy",
+};
+
+/**
  * The earliest date the script should look for events during the very first sync.
  * Format: YYYY-MM-DD
  * @type {string}
@@ -171,9 +185,13 @@ function reconcileBatch(startTime, endTime) {
     if (sourceCal) {
       try {
         const events = sourceCal.getEvents(startTime, endTime);
-        allSourceEvents = allSourceEvents.concat(
-          events.filter((e) => !e.isAllDayEvent())
-        );
+        const nonAllDayEvents = events
+          .filter((e) => !e.isAllDayEvent())
+          .map((event) => ({
+            event: event,
+            sourceCalendarId: id,
+          }));
+        allSourceEvents = allSourceEvents.concat(nonAllDayEvents);
       } catch (e) {
         Logger.log(
           `Could not access calendar ${id}. It may be a permissions issue or the calendar was removed.`
@@ -183,12 +201,15 @@ function reconcileBatch(startTime, endTime) {
   });
 
   // 2. Get all script-generated events from the destination calendar.
+  // Search for all events with our sync tag, regardless of title, to handle multiple calendar titles.
   let destinationEvents = destinationCalendar
-    .getEvents(startTime, endTime, { search: EVENT_TITLE })
+    .getEvents(startTime, endTime)
     .filter((e) => e.getDescription().includes(SYNC_TAG));
 
   // 3. Reconcile: Find events to CREATE.
-  allSourceEvents.forEach((sourceEvent) => {
+  allSourceEvents.forEach((sourceEventData) => {
+    const sourceEvent = sourceEventData.event;
+    const sourceCalendarId = sourceEventData.sourceCalendarId;
     const sourceStartTimeMs = sourceEvent.getStartTime().getTime();
     const sourceEndTimeMs = sourceEvent.getEndTime().getTime();
 
@@ -199,14 +220,25 @@ function reconcileBatch(startTime, endTime) {
     );
 
     if (matchingDestEventIndex !== -1) {
-      // A matching event exists and is correctly synced. Remove it from our list
-      // of destination events so it won't be considered an orphan.
+      // A matching event exists. Check if title needs updating, then mark as correctly synced.
+      const destEvent = destinationEvents[matchingDestEventIndex];
+      const expectedTitle = CALENDAR_NAMES[sourceCalendarId] || EVENT_TITLE;
+
+      // Update title if it doesn't match the expected per-calendar title
+      if (destEvent.getTitle() !== expectedTitle) {
+        Logger.log(`UPDATING event title from "${destEvent.getTitle()}" to "${expectedTitle}"`);
+        destEvent.setTitle(expectedTitle);
+        Utilities.sleep(WAIT_TIME);
+      }
+
+      // Remove from orphans list (event is correctly synced)
       destinationEvents.splice(matchingDestEventIndex, 1);
     } else {
       // No matching event found. This is a new or updated event. Create it.
-      Logger.log(`CREATING event at ${sourceEvent.getStartTime()}`);
+      const eventTitle = CALENDAR_NAMES[sourceCalendarId] || EVENT_TITLE;
+      Logger.log(`CREATING event at ${sourceEvent.getStartTime()} with title: ${eventTitle}`);
       destinationCalendar.createEvent(
-        EVENT_TITLE,
+        eventTitle,
         sourceEvent.getStartTime(),
         sourceEvent.getEndTime(),
         {
