@@ -88,24 +88,49 @@ The first time you save a trigger, Google will require you to authorize the scri
 
 Your setup is now complete! The script will begin its initial sync on the next trigger and will keep your availability calendar updated automatically.
 
+## **Sharing Your Availability Calendar**
+
+Once the script is running, you can share your availability calendar with others so they can see your free/busy times.
+
+### **Step 1: Make Your Calendar Public**
+
+1. In Google Calendar, find your "My Availability" calendar (or whatever you named it) in the list on the left.
+2. Click the three-dots menu (⋮) next to it and select **Settings and sharing**.
+3. Under **Access permissions for events**, check the box for **Make available to public**.
+4. A warning will appear. Click **OK**. You can choose to either show all event details or only free/busy information. Since the script only creates generic "Busy" or custom-named blocks, it's safe to select **See all event details**.
+
+### **Step 2: Get the Public URL**
+
+1. In the same **Settings and sharing** page, scroll down to the **Integrate calendar** section.
+2. Copy the **Public URL to this calendar**.
+3. Share this URL with anyone who needs to see your availability. When they open the link, they will see a web view of your availability calendar.
+
+### **Step 3: (Optional) Share the iCal Address**
+
+For users who want to subscribe to your calendar in their own calendar app (like Outlook, Apple Calendar, or another Google Calendar account):
+
+1. In the **Integrate calendar** section, find the **Public address in iCal format**.
+2. Copy this URL.
+3. Provide this link to others. They can use it to add your availability calendar directly to their own calendar application, and it will stay updated automatically.
+
 ## **Advanced Usage**
 
 ### **Running a Full Manual Sync**
 
 If you ever need to do a complete, comprehensive sync over a long period of time (e.g., after changing the `SYNC_START_DATE`), you can manually run the `runFullSync` function. This is not required for normal operation.
 
-1.  In the script editor, select the function `runFullSync` from the dropdown menu at the top.
-2.  Click the **Run** button.
-3.  Check the **Execution log** to monitor its progress.
+1. In the script editor, select the function `runFullSync` from the dropdown menu at the top.
+2. Click the **Run** button.
+3. Check the **Execution log** to monitor its progress.
 
 ### **Automatic Title Migration**
 
 When you add or modify the `CALENDAR_NAMES` configuration, the script will automatically update existing event titles over time:
 
-- **Existing Events**: Events created before configuring `CALENDAR_NAMES` will gradually get their titles updated to match the new per-calendar naming.
-- **New Events**: All new events will immediately use the correct custom titles.
-- **Rate Limiting**: The script updates only 1 event title per sync batch to avoid hitting Google's API rate limits.
-- **Migration Progress**: You can monitor the migration in the **Execution log** - look for "UPDATING event title" messages.
+* **Existing Events**: Events created before configuring `CALENDAR_NAMES` will gradually get their titles updated to match the new per-calendar naming.
+* **New Events**: All new events will immediately use the correct custom titles.
+* **Rate Limiting**: The script updates only 1 event title per sync batch to avoid hitting Google's API rate limits.
+* **Migration Progress**: You can monitor the migration in the **Execution log** - look for "UPDATING event title" messages.
 
 This gradual approach ensures all events eventually have the correct titles without overwhelming the API.
 
@@ -113,8 +138,8 @@ This gradual approach ensures all events eventually have the correct titles with
 
 If you need to force the script to re-sync all events from the very beginning (`SYNC_START_DATE`), you can manually run the `resetSync` function.
 
-1.  In the script editor, select the function `resetSync` from the dropdown menu at the top.
-2.  Click the **Run** button.
+1. In the script editor, select the function `resetSync` from the dropdown menu at the top.
+2. Click the **Run** button.
 
 This will clear the script's memory of its last sync position and its last reset date. The next time the trigger runs `processSyncBatch`, it will start a full historical sync from the beginning.
 
