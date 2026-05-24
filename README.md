@@ -7,15 +7,17 @@ A Google Apps Script to automatically sync events from multiple source calendars
 *   **One-Way Sync:** Copies events from multiple source calendars to one destination calendar.
 *   **Privacy-Focused:** Creates customizable events, hiding original titles, descriptions, and guest lists while showing relevant availability context.
 *   **Per-Calendar Event Naming:** Assigns custom event titles based on the source calendar (e.g., "Personal", "Work", "Class") instead of generic "Busy" titles.
-*   **Automatic Title Updates:** Gradually updates existing event titles to match the new per-calendar naming system without hitting API rate limits.
+*   **Smart Overlap Consolidation:** Automatically merges overlapping or adjacent events from multiple source calendars into a single, clean availability block. Custom-named source titles are combined (e.g., "Personal & Class") and active sources are detailed in the event description.
+*   **Smart Title & Description Updates:** Instantly updates existing event titles and descriptions to match your per-calendar names and merged source details if they change.
 *   **Smart Filtering:** Selectively handles all-day events while automatically filtering out event invitations you have explicitly declined (`GuestStatus.NO`) as well as events marked as "Free" (such as automatic holiday calendars, birthdays, or manual "free" times), ensuring only genuine commitments block your availability.
 *   **Daily Segment Splitting:** Automatically splits all-day and multi-day timed events into individual daily timed segments. This forces Google Calendar (and third-party scheduling platforms) to display them as busy blocks inside the daily calendar grid rather than as all-day banner events across the top, keeping your hourly grid accurate.
 *   **Unique Handling Matrix:** Reconciles timed events via precise millisecond epoch values and all-day events securely via standard date stamps (`YYYY-MM-DD`) saved inside the event description.
-*   **Robust Reconciliation:** A powerful reconciliation model accurately creates and deletes events, preventing duplicate or orphaned entries.
+*   **Robust Reconciliation:** A powerful reconciliation model accurately creates and deletes events, preventing duplicate or orphaned entries. Automatically cleans up existing overlapping blocks on the first run.
 *   **Automatic Deletion:** Automatically removes availability blocks when the original event is deleted or its time is changed.
 *   **Manual Event Protection:** Allows you to manually add events to the destination calendar without the script deleting them.
-*   **Resilient and Efficient:** Uses a batch processing model with a "sync cursor" to work within Google's execution time limits and pick up where it left off.
-*   **Automatic Nightly Reset:** The sync cursor automatically resets every morning, ensuring the script re-validates recent events and maintains long-term accuracy without needing a separate trigger.
+*   **Rolling Sliding Window:** Reconciles a dynamic, configurable rolling window (e.g., past 7 days to future 30 days) on every trigger to catch changes immediately.
+*   **Resilient Rate-Limit Protection:** Employs an exponential backoff retry mechanism to automatically handle Google's API rate limits, removing arbitrary execution pauses and accelerating performance to under 2 seconds.
+*   **Dynamic Timezone Awareness:** Automatically detects and aligns with your primary calendar's timezone settings.
 
 ## **Setup Instructions**
 
@@ -64,8 +66,10 @@ In the `Code.gs` file, find the `CONFIGURATION` section at the top and replace t
     };
     ```
     Keys should match entries in `SOURCE_CALENDAR_IDS`. If a calendar ID is not found here, the script uses the `EVENT_TITLE`.
-*   `SYNC_START_DATE`: Set the earliest date the script should look for events. This prevents it from syncing very old events.
-*   `TIMEZONE`: Set your local timezone (e.g., "America/New_York", "Europe/London") to ensure the nightly reset happens at the correct time.
+*   `SYNC_START_DATE`: The earliest date the script should look for events during manual full sync runs.
+*   `TIMEZONE`: (Optional) Set your local timezone (e.g., "America/New_York", "Europe/London"). Leave blank to let the script dynamically detect your timezone.
+*   `SYNC_DAYS_BEFORE`: The number of days in the past to sync on every execution (default: 7).
+*   `SYNC_DAYS_AFTER`: The number of days in the future to sync on every execution (default: 30).
 
 ### **Step 6: Set Up the Trigger**
 
@@ -77,7 +81,7 @@ You only need one trigger to run the script automatically.
     *   **Deployment to run from:** `Head`
     *   **Event source:** `Time-driven`
     *   **Type of time-based trigger:** `Minutes timer`
-    *   **Minute interval:** `Every 15 minutes` (Recommended) or `Every 30 minutes`.
+    *   **Minute interval:** `Every 5 minutes` (Recommended sweet spot for immediate syncing and rate limit safety).
     *   Click **Save**.
 
 ### **Step 7: Authorize the Script**
@@ -89,7 +93,7 @@ The first time you save a trigger, Google will require you to authorize the scri
 3.  You will see a screen saying **"Google hasn't verified this app"**. This is normal because you are the user. Click **Advanced**, then click **Go to [Your Project Name] (unsafe)**.
 4.  Review the permissions and click **Allow**.
 
-Your setup is now complete! The script will begin its initial sync on the next trigger and will keep your availability calendar updated automatically.
+Your setup is now complete! The script will begin its rolling sync on the next trigger and will keep your availability calendar updated automatically.
 
 ## **Sharing Your Availability Calendar**
 
@@ -126,25 +130,21 @@ If you ever need to do a complete, comprehensive sync over a long period of time
 2. Click the **Run** button.
 3. Check the **Execution log** to monitor its progress.
 
-### **Automatic Title Migration**
+### **Overlap Consolidation and Self-Healing**
 
-When you add or modify the `CALENDAR_NAMES` configuration, the script will automatically update existing event titles over time:
+When the script runs, it automatically merges overlapping and adjacent events from your source calendars into single, smooth unavailability blocks. 
+* **Self-Healing:** On the very first run of this updated script, it will automatically clean up any existing overlapping blocks that were left by the old script. It deletes the legacy overlapping events and replaces them with consolidated single-block events automatically.
+* **Combined Titles:** If a "Work" event and a "Personal" event overlap, the synced event is dynamically titled `Work & Personal`.
+* **Details in Description:** The synced event's description will detail the contributing sources, e.g., `sync-id:auto-generated | Sources: Work, Personal`.
 
-* **Existing Events**: Events created before configuring `CALENDAR_NAMES` will gradually get their titles updated to match the new per-calendar naming.
-* **New Events**: All new events will immediately use the correct custom titles.
-* **Rate Limiting**: The script updates only 1 event title per sync batch to avoid hitting Google's API rate limits.
-* **Migration Progress**: You can monitor the migration in the **Execution log** - look for "UPDATING event title" messages.
+### **Clearing Legacy Properties**
 
-This gradual approach ensures all events eventually have the correct titles without overwhelming the API.
-
-### **Resetting the Sync**
-
-If you need to force the script to re-sync all events from the very beginning (`SYNC_START_DATE`), you can manually run the `resetSync` function.
+The modernized rolling window sync no longer relies on the legacy `syncCursor` state or nightly reset properties. If you want to keep your project properties clean, you can manually run the `resetSync` function once:
 
 1. In the script editor, select the function `resetSync` from the dropdown menu at the top.
 2. Click the **Run** button.
 
-This will clear the script's memory of its last sync position and its last reset date. The next time the trigger runs `processSyncBatch`, it will start a full historical sync from the beginning.
+This will clear any old sync cursors from your Script Properties.
 
 ## **License**
 
