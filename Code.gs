@@ -1,7 +1,7 @@
 /**
  * @fileoverview Google Apps Script to sync events from multiple source calendars
  * to a single destination calendar using a robust reconciliation model.
- * @version 2.0
+ * @version 3.0
  */
 
 // --- CONFIGURATION ---
@@ -22,8 +22,7 @@ const SOURCE_CALENDAR_IDS = [
  * events will be created.
  * @type {string}
  */
-const DESTINATION_CALENDAR_ID =
-  "destination_calendar_id@group.calendar.google.com";
+const DESTINATION_CALENDAR_ID = "destination_calendar_id@group.calendar.google.com";
 
 /**
  * The title for the events created on the destination calendar.
@@ -46,17 +45,11 @@ const CALENDAR_NAMES = {
 };
 
 /**
- * The earliest date the script should look for events during the very first sync.
+ * The earliest date the script should look for events during manual full sync runs.
  * Format: YYYY-MM-DD
  * @type {string}
  */
 const SYNC_START_DATE = "2025-01-01";
-
-/**
- * The IANA timezone name for the nightly reset check and date boundary calculations.
- * @type {string}
- */
-const TIMEZONE = "America/Chicago";
 
 /**
  * A unique tag added to the description of script-generated events. This
@@ -67,71 +60,51 @@ const TIMEZONE = "America/Chicago";
 const SYNC_TAG = "sync-id:auto-generated";
 
 /**
- * The time in milliseconds to wait between creating/deleting events to avoid
- * hitting Google's API rate limits. 1000ms = 1 second.
- * @type {number}
- * @const
+ * The IANA timezone name for date boundary calculations.
+ * Leave blank to dynamically detect your primary calendar's timezone.
+ * @type {string}
  */
-const WAIT_TIME = 1000;
+const TIMEZONE = "America/Chicago";
+
+/**
+ * Number of days in the past to sync on every rolling execution.
+ * Keep this small (e.g. 7 days) to catch recent modifications/deletions.
+ * @type {number}
+ */
+const SYNC_DAYS_BEFORE = 7;
+
+/**
+ * Number of days in the future to sync on every rolling execution.
+ * Keep this at a standard range (e.g. 30 days) to prevent rate limits while maintaining forward visibility.
+ * @type {number}
+ */
+const SYNC_DAYS_AFTER = 30;
 
 
 // --- PRIMARY TRIGGER FUNCTIONS ---
 
 /**
- * Main function for frequent triggers (e.g., every 15 minutes).
- * Processes a single batch of events. It includes logic to reset its sync
- * cursor to the SYNC_START_DATE every night at 5 AM Central Time.
+ * Main function for frequent triggers (e.g., every 5 minutes).
+ * Performs a rolling sliding-window sync around the current date.
+ * Does not require script properties or cursor resets.
  */
 function processSyncBatch() {
-  const properties = PropertiesService.getScriptProperties();
-
-  // --- Nightly Cursor Reset Logic ---
-  const now = new Date();
-  const todayCt = Utilities.formatDate(now, TIMEZONE, "yyyy-MM-dd");
-  const hourCt = parseInt(Utilities.formatDate(now, TIMEZONE, "H"), 10);
-  const lastResetDate = properties.getProperty("lastResetDate");
-
-  if (hourCt === 5 && todayCt !== lastResetDate) {
-    Logger.log("Performing nightly cursor reset for 5 AM CT.");
-    properties.setProperty("syncCursor", SYNC_START_DATE);
-    properties.setProperty("lastResetDate", todayCt); // Mark that we've reset for today.
-  }
-  // --- End Reset Logic ---
-
-  let cursor = properties.getProperty("syncCursor");
-  if (!cursor) {
-    cursor = SYNC_START_DATE;
-  }
-
-  let startTime = new Date(cursor);
-
-  // --- Future Cursor Check ---
+  const activeTimezone = TIMEZONE || CalendarApp.getDefaultCalendar().getTimeZone() || Session.getScriptTimeZone();
   const today = new Date();
-  const oneYearFromToday = new Date();
-  oneYearFromToday.setFullYear(oneYearFromToday.getFullYear() + 1);
+  
+  // Calculate rolling start time (start of day, SYNC_DAYS_BEFORE days ago)
+  const startTime = new Date(today.getTime());
+  startTime.setDate(startTime.getDate() - SYNC_DAYS_BEFORE);
+  startTime.setHours(0, 0, 0, 0);
+  
+  // Calculate rolling end time (end of day, SYNC_DAYS_AFTER days from now)
+  const endTime = new Date(today.getTime());
+  endTime.setDate(endTime.getDate() + SYNC_DAYS_AFTER);
+  endTime.setHours(23, 59, 59, 999);
 
-  if (startTime > oneYearFromToday) {
-    Logger.log(
-      "Sync cursor is more than a year in the future. Resetting to today."
-    );
-    startTime = today;
-    properties.setProperty("syncCursor", startTime.toISOString());
-  }
-  // --- End Future Cursor Check ---
-
-  let endTime = new Date(startTime);
-  endTime.setDate(endTime.getDate() + 31); // Process a ~1 month chunk
-
-  Logger.log(
-    `Processing batch from ${startTime.toLocaleDateString()} to ${endTime.toLocaleDateString()}`
-  );
+  Logger.log(`[Rolling Sync] Processing window from ${Utilities.formatDate(startTime, activeTimezone, "yyyy-MM-dd HH:mm:ss")} to ${Utilities.formatDate(endTime, activeTimezone, "yyyy-MM-dd HH:mm:ss")} (${activeTimezone})`);
   reconcileBatch(startTime, endTime);
-
-  // Update the cursor for the next run.
-  properties.setProperty("syncCursor", endTime.toISOString());
-  Logger.log(
-    `Sync batch complete. Next run will start from: ${endTime.toLocaleDateString()}`
-  );
+  Logger.log('[Rolling Sync] Complete.');
 }
 
 /**
@@ -139,26 +112,19 @@ function processSyncBatch() {
  * Intended for manual execution or a periodic (e.g., weekly) trigger.
  */
 function runFullSync() {
-  Logger.log("--- Starting Full Manual Sync ---");
-  let loopStartTime = new Date(SYNC_START_DATE);
+  const activeTimezone = TIMEZONE || CalendarApp.getDefaultCalendar().getTimeZone() || Session.getScriptTimeZone();
+  Logger.log('--- Starting Full Manual Sync ---');
+  
+  const startTime = new Date(SYNC_START_DATE);
   const today = new Date();
+  const endTime = new Date(today.getTime());
+  endTime.setDate(endTime.getDate() + SYNC_DAYS_AFTER);
+  endTime.setHours(23, 59, 59, 999);
 
-  while (loopStartTime < today) {
-    let loopEndTime = new Date(loopStartTime);
-    loopEndTime.setDate(loopEndTime.getDate() + 31);
-
-    if (loopEndTime > today) {
-      loopEndTime = today;
-    }
-
-    Logger.log(
-      `Full Sync | Processing batch from ${loopStartTime.toLocaleDateString()} to ${loopEndTime.toLocaleDateString()}`
-    );
-    reconcileBatch(loopStartTime, loopEndTime);
-    loopStartTime = loopEndTime;
-  }
-
-  Logger.log("--- Full Manual Sync Complete ---");
+  Logger.log(`[Full Sync] Reconciling entire history from ${Utilities.formatDate(startTime, activeTimezone, "yyyy-MM-dd")} to ${Utilities.formatDate(endTime, activeTimezone, "yyyy-MM-dd")}`);
+  reconcileBatch(startTime, endTime);
+  
+  Logger.log('--- Full Manual Sync Complete ---');
 }
 
 
@@ -166,119 +132,173 @@ function runFullSync() {
 
 /**
  * Reconciles events between source and destination calendars for a given time window.
- * This is the core engine that handles creation, deletion, and updates.
+ * Integrates interval overlap consolidation, timezone awareness, and dynamic backoff retries.
  * @param {Date} startTime The start of the time window to process.
  * @param {Date} endTime The end of the time window to process.
  */
 function reconcileBatch(startTime, endTime) {
-  const destinationCalendar = CalendarApp.getCalendarById(
-    DESTINATION_CALENDAR_ID
-  );
+  const activeTimezone = TIMEZONE || CalendarApp.getDefaultCalendar().getTimeZone() || Session.getScriptTimeZone();
+  const destinationCalendar = CalendarApp.getCalendarById(DESTINATION_CALENDAR_ID);
+  
   if (!destinationCalendar) {
-    Logger.log("Reconciliation Aborted: Destination calendar not found.");
+    Logger.log('Reconciliation Aborted: Destination calendar not found.');
     return;
   }
 
-  // 1. Get all relevant events from all source calendars and map them to daily segments.
-  let allSourceSegments = [];
-  SOURCE_CALENDAR_IDS.forEach((id) => {
+  // 1. Fetch, filter, and normalize all source events
+  let timedSegments = [];
+  let allDaySegments = [];
+
+  SOURCE_CALENDAR_IDS.forEach(id => {
     const sourceCal = CalendarApp.getCalendarById(id);
-    if (sourceCal) {
-      try {
-        const events = sourceCal.getEvents(startTime, endTime);
-        events.forEach((e) => {
-          // --- Smart Filtering ---
-          // Filter out explicitly declined invitations
-          try {
-            if (e.getMyStatus() === CalendarApp.GuestStatus.NO) {
-              return;
-            }
-          } catch (err) {
-            // Ignore errors if getMyStatus() is not supported (e.g., read-only public import calendars)
+    if (!sourceCal) {
+      Logger.log(`Could not access calendar ${id}. It may be a permissions issue or the calendar was removed.`);
+      return;
+    }
+
+    try {
+      const events = sourceCal.getEvents(startTime, endTime);
+      events.forEach(e => {
+        // --- Smart Filtering ---
+        // Filter out explicitly declined invitations
+        try {
+          if (e.getMyStatus() === CalendarApp.GuestStatus.NO) {
+            return;
           }
+        } catch (err) {}
 
-          // Filter out events marked as "Free" (Transparent), such as holidays, birthdays, or manually set free times
-          try {
-            if (e.getTransparency() === CalendarApp.EventTransparency.TRANSPARENT) {
-              return;
-            }
-          } catch (err) {
-            // Ignore if getTransparency() is not supported
+        // Filter out events marked as "Free" (Transparent)
+        try {
+          if (e.getTransparency() === CalendarApp.EventTransparency.TRANSPARENT) {
+            return;
           }
+        } catch (err) {}
 
-          const isAllDay = e.isAllDayEvent();
-          const startStr = Utilities.formatDate(e.getStartTime(), TIMEZONE, "yyyy-MM-dd");
-          const endStr = Utilities.formatDate(e.getEndTime(), TIMEZONE, "yyyy-MM-dd");
+        const isAllDay = e.isAllDayEvent();
+        const startStr = Utilities.formatDate(e.getStartTime(), activeTimezone, "yyyy-MM-dd");
+        const endStr = Utilities.formatDate(e.getEndTime(), activeTimezone, "yyyy-MM-dd");
 
-          // Convert all-day or multi-day events into single-day timed segments
-          // to ensure they display on the calendar grid rather than the top banner.
-          if (isAllDay) {
-            let current = Utilities.parseDate(startStr, TIMEZONE, "yyyy-MM-dd");
-            const end = Utilities.parseDate(endStr, TIMEZONE, "yyyy-MM-dd");
-            while (current < end) {
-              const dayStr = Utilities.formatDate(current, TIMEZONE, "yyyy-MM-dd");
-              allSourceSegments.push({
-                isAllDay: true,
-                dateStamp: dayStr,
-                startTime: Utilities.parseDate(dayStr + " 00:00:00", TIMEZONE, "yyyy-MM-dd HH:mm:ss"),
-                endTime: Utilities.parseDate(dayStr + " 23:59:59", TIMEZONE, "yyyy-MM-dd HH:mm:ss"),
-                sourceCalendarId: id,
-              });
-              current.setDate(current.getDate() + 1);
-            }
+        if (isAllDay) {
+          // All-Day Event: Split into daily dateStamp entries
+          let current = new Date(e.getStartTime().getTime());
+          const end = e.getEndTime();
+          while (current < end) {
+            const dayStr = Utilities.formatDate(current, activeTimezone, "yyyy-MM-dd");
+            allDaySegments.push({
+              isAllDay: true,
+              dateStamp: dayStr,
+              sourceCalendarId: id
+            });
+            current.setDate(current.getDate() + 1);
+          }
+        } else {
+          // Timed Event
+          if (startStr === endStr) {
+            // Single-day timed event
+            timedSegments.push({
+              isAllDay: false,
+              startTime: e.getStartTime(),
+              endTime: e.getEndTime(),
+              sourceCalendarId: id
+            });
           } else {
-            // Timed event
-            if (startStr === endStr) {
-              // Single-day timed event
-              allSourceSegments.push({
-                isAllDay: false,
-                startTime: e.getStartTime(),
-                endTime: e.getEndTime(),
-                sourceCalendarId: id,
-              });
-            } else {
-              // Multi-day timed event: split into daily segments
-              let current = Utilities.parseDate(startStr, TIMEZONE, "yyyy-MM-dd");
-              const end = Utilities.parseDate(endStr, TIMEZONE, "yyyy-MM-dd");
-              while (current <= end) {
-                const dayStr = Utilities.formatDate(current, TIMEZONE, "yyyy-MM-dd");
-                let segStart =
-                  dayStr === startStr
-                    ? e.getStartTime()
-                    : Utilities.parseDate(dayStr + " 00:00:00", TIMEZONE, "yyyy-MM-dd HH:mm:ss");
-                let segEnd =
-                  dayStr === endStr
-                    ? e.getEndTime()
-                    : Utilities.parseDate(dayStr + " 23:59:59", TIMEZONE, "yyyy-MM-dd HH:mm:ss");
-
-                if (segStart < segEnd) {
-                  allSourceSegments.push({
-                    isAllDay: false,
-                    startTime: segStart,
-                    endTime: segEnd,
-                    sourceCalendarId: id,
-                  });
-                }
-                current.setDate(current.getDate() + 1);
+            // Multi-day timed event: split into daily timed segments
+            let current = new Date(e.getStartTime().getTime());
+            const end = e.getEndTime();
+            while (current <= end) {
+              const dayStr = Utilities.formatDate(current, activeTimezone, "yyyy-MM-dd");
+              
+              let segStart = (dayStr === startStr) 
+                ? e.getStartTime() 
+                : Utilities.parseDate(dayStr + " 00:00:00", activeTimezone, "yyyy-MM-dd HH:mm:ss");
+                
+              let segEnd = (dayStr === endStr) 
+                ? e.getEndTime() 
+                : Utilities.parseDate(dayStr + " 23:59:59", activeTimezone, "yyyy-MM-dd HH:mm:ss");
+              
+              if (segStart.getTime() < segEnd.getTime()) {
+                timedSegments.push({
+                  isAllDay: false,
+                  startTime: segStart,
+                  endTime: segEnd,
+                  sourceCalendarId: id
+                });
               }
+              current.setDate(current.getDate() + 1);
+              current.setHours(0, 0, 0, 0);
             }
           }
-        });
-      } catch (err) {
-        Logger.log(
-          `Could not access calendar ${id}. It may be a permissions issue or the calendar was removed.`
-        );
-      }
+        }
+      });
+    } catch (err) {
+      Logger.log(`Error reading events from calendar ${id}: ${err.toString()}`);
     }
   });
 
-  // 2. Get all script-generated events from the destination calendar.
-  let destinationEvents = destinationCalendar
-    .getEvents(startTime, endTime)
-    .filter((e) => e.getDescription().includes(SYNC_TAG));
+  // 2. Interval-based Overlap Consolidation
 
-  // Parse destination events to easily identify all-day vs. timed entries.
-  let parsedDestEvents = destinationEvents.map((destEvent) => {
+  // A. Consolidate Timed segments
+  let mergedTimed = [];
+  if (timedSegments.length > 0) {
+    // Sort chronologically by start time
+    timedSegments.sort((a, b) => a.startTime.getTime() - b.startTime.getTime());
+
+    let current = {
+      startTime: timedSegments[0].startTime,
+      endTime: timedSegments[0].endTime,
+      sourceCalendarIds: [timedSegments[0].sourceCalendarId]
+    };
+
+    for (let i = 1; i < timedSegments.length; i++) {
+      let seg = timedSegments[i];
+      // If overlapping or adjacent (seg starts before or exactly at current end time)
+      if (seg.startTime.getTime() <= current.endTime.getTime()) {
+        // Extend end time if next event ends later
+        if (seg.endTime.getTime() > current.endTime.getTime()) {
+          current.endTime = seg.endTime;
+        }
+        if (!current.sourceCalendarIds.includes(seg.sourceCalendarId)) {
+          current.sourceCalendarIds.push(seg.sourceCalendarId);
+        }
+      } else {
+        mergedTimed.push(current);
+        current = {
+          startTime: seg.startTime,
+          endTime: seg.endTime,
+          sourceCalendarIds: [seg.sourceCalendarId]
+        };
+      }
+    }
+    mergedTimed.push(current);
+  }
+
+  // B. Consolidate All-Day segments by dateStamp
+  let allDayGroups = {};
+  allDaySegments.forEach(seg => {
+    if (!allDayGroups[seg.dateStamp]) {
+      allDayGroups[seg.dateStamp] = [];
+    }
+    if (!allDayGroups[seg.dateStamp].includes(seg.sourceCalendarId)) {
+      allDayGroups[seg.dateStamp].push(seg.sourceCalendarId);
+    }
+  });
+
+  let mergedAllDay = Object.keys(allDayGroups).map(dateStr => {
+    let dayStart = Utilities.parseDate(dateStr + " 00:00:00", activeTimezone, "yyyy-MM-dd HH:mm:ss");
+    let dayEnd = Utilities.parseDate(dateStr + " 23:59:59", activeTimezone, "yyyy-MM-dd HH:mm:ss");
+    return {
+      dateStamp: dateStr,
+      startTime: dayStart,
+      endTime: dayEnd,
+      sourceCalendarIds: allDayGroups[dateStr]
+    };
+  });
+
+  // 3. Get and parse existing script-generated events on the destination calendar
+  const destinationEvents = destinationCalendar.getEvents(startTime, endTime)
+    .filter(e => e.getDescription().includes(SYNC_TAG));
+
+  let parsedDestEvents = destinationEvents.map(destEvent => {
     const desc = destEvent.getDescription();
     const isAllDay = desc.includes("all-day:");
     let dateStamp = null;
@@ -293,85 +313,144 @@ function reconcileBatch(startTime, endTime) {
       isAllDay: isAllDay,
       dateStamp: dateStamp,
       startTimeMs: destEvent.getStartTime().getTime(),
-      endTimeMs: destEvent.getEndTime().getTime(),
+      endTimeMs: destEvent.getEndTime().getTime()
     };
   });
 
-  // 3. Reconcile: Find segments to CREATE or UPDATE.
-  allSourceSegments.forEach((sourceSeg) => {
-    const expectedTitle = CALENDAR_NAMES[sourceSeg.sourceCalendarId] || EVENT_TITLE;
-    let matchingDestIndex = -1;
+  // Helper to resolve combined titles and descriptions
+  const getExpectedMeta = (sourceCalendarIds, isAllDay, dateStamp = null) => {
+    // Resolve custom names, fallback to default EVENT_TITLE
+    let names = sourceCalendarIds.map(id => CALENDAR_NAMES[id] || EVENT_TITLE);
+    // Deduplicate and sort
+    let uniqueNames = [...new Set(names)].sort();
+    
+    let expectedTitle = uniqueNames.join(' & ') || EVENT_TITLE;
+    let expectedDescription = isAllDay 
+      ? `${SYNC_TAG} | all-day:${dateStamp} | Sources: ${uniqueNames.join(', ')}`
+      : `${SYNC_TAG} | Sources: ${uniqueNames.join(', ')}`;
+      
+    return { expectedTitle, expectedDescription };
+  };
 
-    if (sourceSeg.isAllDay) {
-      // All-Day reconciliation: Match securely using explicit standard date stamps (YYYY-MM-DD)
-      matchingDestIndex = parsedDestEvents.findIndex(
-        (dest) => dest.isAllDay && dest.dateStamp === sourceSeg.dateStamp
-      );
-    } else {
-      // Timed reconciliation: Match via precise millisecond epoch values
-      matchingDestIndex = parsedDestEvents.findIndex(
-        (dest) =>
-          !dest.isAllDay &&
-          dest.startTimeMs === sourceSeg.startTime.getTime() &&
-          dest.endTimeMs === sourceSeg.endTime.getTime()
-      );
-    }
+  // 4. Reconcile: CREATE or UPDATE
+
+  // Reconcile All-Day consolidated blocks
+  mergedAllDay.forEach(segment => {
+    const { expectedTitle, expectedDescription } = getExpectedMeta(segment.sourceCalendarIds, true, segment.dateStamp);
+    
+    const matchingDestIndex = parsedDestEvents.findIndex(dest => 
+      dest.isAllDay && dest.dateStamp === segment.dateStamp
+    );
 
     if (matchingDestIndex !== -1) {
-      // A matching event exists. Check if title needs updating, then mark as correctly synced.
       const matched = parsedDestEvents[matchingDestIndex];
-      if (matched.event.getTitle() !== expectedTitle) {
-        Logger.log(
-          `UPDATING event title from "${matched.event.getTitle()}" to "${expectedTitle}"`
-        );
-        matched.event.setTitle(expectedTitle);
-        Utilities.sleep(WAIT_TIME);
+      // Update title or description if changed
+      if (matched.event.getTitle() !== expectedTitle || matched.event.getDescription() !== expectedDescription) {
+        Logger.log(`[All-Day Update] Updating event on ${segment.dateStamp} -> Title: "${expectedTitle}", Desc: "${expectedDescription}"`);
+        callWithBackoff(() => {
+          matched.event.setTitle(expectedTitle);
+          matched.event.setDescription(expectedDescription);
+        });
       }
-      // Remove from active list (not an orphan)
-      parsedDestEvents.splice(matchingDestIndex, 1);
+      parsedDestEvents.splice(matchingDestIndex, 1); // remove from orphaned list
     } else {
-      // No matching event found. Create it.
-      if (sourceSeg.isAllDay) {
-        const description = `${SYNC_TAG} | all-day:${sourceSeg.dateStamp}`;
-        Logger.log(
-          `CREATING all-day slot on ${sourceSeg.dateStamp} with title: ${expectedTitle}`
-        );
-        destinationCalendar.createEvent(expectedTitle, sourceSeg.startTime, sourceSeg.endTime, {
-          description: description,
+      // Create new consolidated all-day slot
+      Logger.log(`[All-Day Create] Creating slot on ${segment.dateStamp} -> Title: "${expectedTitle}"`);
+      callWithBackoff(() => {
+        destinationCalendar.createEvent(expectedTitle, segment.startTime, segment.endTime, {
+          description: expectedDescription
         });
-      } else {
-        const description = SYNC_TAG;
-        Logger.log(
-          `CREATING timed slot at ${sourceSeg.startTime} to ${sourceSeg.endTime} with title: ${expectedTitle}`
-        );
-        destinationCalendar.createEvent(expectedTitle, sourceSeg.startTime, sourceSeg.endTime, {
-          description: description,
-        });
-      }
-      Utilities.sleep(WAIT_TIME);
+      });
     }
   });
 
-  // 4. Reconcile: Find events to DELETE.
-  // Any events left in parsedDestEvents are orphans (their source was deleted, declined, or changed).
-  parsedDestEvents.forEach((orphan) => {
-    Logger.log(`DELETING orphaned event at ${orphan.event.getStartTime()}`);
-    orphan.event.deleteEvent();
-    Utilities.sleep(WAIT_TIME);
+  // Reconcile Timed consolidated blocks
+  mergedTimed.forEach(segment => {
+    const { expectedTitle, expectedDescription } = getExpectedMeta(segment.sourceCalendarIds, false);
+
+    const matchingDestIndex = parsedDestEvents.findIndex(dest => 
+      !dest.isAllDay &&
+      dest.startTimeMs === segment.startTime.getTime() &&
+      dest.endTimeMs === segment.endTime.getTime()
+    );
+
+    if (matchingDestIndex !== -1) {
+      const matched = parsedDestEvents[matchingDestIndex];
+      // Update title or description if changed
+      if (matched.event.getTitle() !== expectedTitle || matched.event.getDescription() !== expectedDescription) {
+        Logger.log(`[Timed Update] Updating event at ${segment.startTime} -> Title: "${expectedTitle}", Desc: "${expectedDescription}"`);
+        callWithBackoff(() => {
+          matched.event.setTitle(expectedTitle);
+          matched.event.setDescription(expectedDescription);
+        });
+      }
+      parsedDestEvents.splice(matchingDestIndex, 1); // remove from orphaned list
+    } else {
+      // Create new consolidated timed slot
+      Logger.log(`[Timed Create] Creating slot at ${segment.startTime} to ${segment.endTime} -> Title: "${expectedTitle}"`);
+      callWithBackoff(() => {
+        destinationCalendar.createEvent(expectedTitle, segment.startTime, segment.endTime, {
+          description: expectedDescription
+        });
+      });
+    }
+  });
+
+  // 5. Reconcile: DELETE Orphans
+  parsedDestEvents.forEach(orphan => {
+    Logger.log(`[Delete Orphan] Deleting outdated/cancelled event at ${orphan.event.getStartTime()}`);
+    callWithBackoff(() => {
+      orphan.event.deleteEvent();
+    });
   });
 }
+
 
 // --- UTILITY FUNCTIONS ---
 
 /**
- * Utility function to manually reset the sync process for the main batch processor.
- * Run this from the script editor to force the next run of processSyncBatch
- * to start from the SYNC_START_DATE.
+ * Wraps a Google Calendar API operation with exponential backoff to handle rate limits gracefully.
+ * @param {Function} operation The function containing the Calendar API call.
+ * @param {number} maxRetries The maximum number of retries (default: 4).
+ * @return {*} The result of the operation.
+ */
+function callWithBackoff(operation, maxRetries = 4) {
+  let attempt = 0;
+  while (true) {
+    try {
+      return operation();
+    } catch (e) {
+      attempt++;
+      const errorMessage = e.message || e.toString();
+      const msg = errorMessage.toLowerCase();
+      
+      // Google Calendar specific write quota and rate limit patterns
+      const isRateLimit = msg.includes('rate limit') || 
+                          msg.includes('quota') || 
+                          msg.includes('too many') || 
+                          msg.includes('short time') || 
+                          msg.includes('try again') || 
+                          msg.includes('limit');
+      
+      if (isRateLimit && attempt <= maxRetries) {
+        // Sleep dynamically: 2^attempt * 1000ms + random jitter of up to 1000ms
+        const sleepTime = Math.pow(2, attempt) * 1000 + Math.random() * 1000;
+        Logger.log(`Rate limit or API quota warning encountered. Sleeping for ${Math.round(sleepTime)}ms before retry (${attempt}/${maxRetries})...`);
+        Utilities.sleep(sleepTime);
+      } else {
+        Logger.log(`Operation failed definitively: ${errorMessage}`);
+        throw e;
+      }
+    }
+  }
+}
+
+/**
+ * Utility function to manually reset the legacy cursor properties if needed.
+ * This is no longer required for rolling sync, but clears properties to keep properties tidy.
  */
 function resetSync() {
-  PropertiesService.getScriptProperties().deleteProperty("syncCursor");
-  PropertiesService.getScriptProperties().deleteProperty("lastResetDate");
-  Logger.log(
-    "Sync cursor has been reset. The next run of processSyncBatch will start from the beginning."
-  );
+  PropertiesService.getScriptProperties().deleteProperty('syncCursor');
+  PropertiesService.getScriptProperties().deleteProperty('lastResetDate');
+  Logger.log('Legacy sync properties cleared successfully.');
 }
