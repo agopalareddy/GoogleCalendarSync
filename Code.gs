@@ -53,8 +53,7 @@ const CALENDAR_NAMES = {
 const SYNC_START_DATE = "2025-01-01";
 
 /**
- * The IANA timezone name for the nightly reset check (e.g., "America/New_York", "Europe/London").
- * This ensures the reset happens at the correct local time.
+ * The IANA timezone name for the nightly reset check and date boundary calculations.
  * @type {string}
  */
 const TIMEZONE = "America/Chicago";
@@ -74,6 +73,7 @@ const SYNC_TAG = "sync-id:auto-generated";
  * @const
  */
 const WAIT_TIME = 1000;
+
 
 // --- PRIMARY TRIGGER FUNCTIONS ---
 
@@ -161,6 +161,7 @@ function runFullSync() {
   Logger.log("--- Full Manual Sync Complete ---");
 }
 
+
 // --- CORE LOGIC ---
 
 /**
@@ -178,21 +179,83 @@ function reconcileBatch(startTime, endTime) {
     return;
   }
 
-  // 1. Get all relevant events from all source calendars.
-  let allSourceEvents = [];
+  // 1. Get all relevant events from all source calendars and map them to daily segments.
+  let allSourceSegments = [];
   SOURCE_CALENDAR_IDS.forEach((id) => {
     const sourceCal = CalendarApp.getCalendarById(id);
     if (sourceCal) {
       try {
         const events = sourceCal.getEvents(startTime, endTime);
-        const nonAllDayEvents = events
-          .filter((e) => !e.isAllDayEvent())
-          .map((event) => ({
-            event: event,
-            sourceCalendarId: id,
-          }));
-        allSourceEvents = allSourceEvents.concat(nonAllDayEvents);
-      } catch (e) {
+        events.forEach((e) => {
+          // --- Smart Filtering ---
+          // Filter out explicitly declined invitations
+          try {
+            if (e.getMyStatus() === CalendarApp.GuestStatus.NO) {
+              return;
+            }
+          } catch (err) {
+            // Ignore errors if getMyStatus() is not supported (e.g., read-only public import calendars)
+          }
+
+          const isAllDay = e.isAllDayEvent();
+          const startStr = Utilities.formatDate(e.getStartTime(), TIMEZONE, "yyyy-MM-dd");
+          const endStr = Utilities.formatDate(e.getEndTime(), TIMEZONE, "yyyy-MM-dd");
+
+          // Convert all-day or multi-day events into single-day timed segments
+          // to ensure they display on the calendar grid rather than the top banner.
+          if (isAllDay) {
+            let current = Utilities.parseDate(startStr, TIMEZONE, "yyyy-MM-dd");
+            const end = Utilities.parseDate(endStr, TIMEZONE, "yyyy-MM-dd");
+            while (current < end) {
+              const dayStr = Utilities.formatDate(current, TIMEZONE, "yyyy-MM-dd");
+              allSourceSegments.push({
+                isAllDay: true,
+                dateStamp: dayStr,
+                startTime: Utilities.parseDate(dayStr + " 00:00:00", TIMEZONE, "yyyy-MM-dd HH:mm:ss"),
+                endTime: Utilities.parseDate(dayStr + " 23:59:59", TIMEZONE, "yyyy-MM-dd HH:mm:ss"),
+                sourceCalendarId: id,
+              });
+              current.setDate(current.getDate() + 1);
+            }
+          } else {
+            // Timed event
+            if (startStr === endStr) {
+              // Single-day timed event
+              allSourceSegments.push({
+                isAllDay: false,
+                startTime: e.getStartTime(),
+                endTime: e.getEndTime(),
+                sourceCalendarId: id,
+              });
+            } else {
+              // Multi-day timed event: split into daily segments
+              let current = Utilities.parseDate(startStr, TIMEZONE, "yyyy-MM-dd");
+              const end = Utilities.parseDate(endStr, TIMEZONE, "yyyy-MM-dd");
+              while (current <= end) {
+                const dayStr = Utilities.formatDate(current, TIMEZONE, "yyyy-MM-dd");
+                let segStart =
+                  dayStr === startStr
+                    ? e.getStartTime()
+                    : Utilities.parseDate(dayStr + " 00:00:00", TIMEZONE, "yyyy-MM-dd HH:mm:ss");
+                let segEnd =
+                  dayStr === endStr
+                    ? e.getEndTime()
+                    : Utilities.parseDate(dayStr + " 23:59:59", TIMEZONE, "yyyy-MM-dd HH:mm:ss");
+
+                if (segStart < segEnd) {
+                  allSourceSegments.push({
+                    isAllDay: false,
+                    startTime: segStart,
+                    endTime: segEnd,
+                    sourceCalendarId: id,
+                  });
+                }
+                current.setDate(current.getDate() + 1);
+              }
+            }
+          }
+        });
+      } catch (err) {
         Logger.log(
           `Could not access calendar ${id}. It may be a permissions issue or the calendar was removed.`
         );
@@ -201,59 +264,90 @@ function reconcileBatch(startTime, endTime) {
   });
 
   // 2. Get all script-generated events from the destination calendar.
-  // Search for all events with our sync tag, regardless of title, to handle multiple calendar titles.
   let destinationEvents = destinationCalendar
     .getEvents(startTime, endTime)
     .filter((e) => e.getDescription().includes(SYNC_TAG));
 
-  // 3. Reconcile: Find events to CREATE.
-  allSourceEvents.forEach((sourceEventData) => {
-    const sourceEvent = sourceEventData.event;
-    const sourceCalendarId = sourceEventData.sourceCalendarId;
-    const sourceStartTimeMs = sourceEvent.getStartTime().getTime();
-    const sourceEndTimeMs = sourceEvent.getEndTime().getTime();
+  // Parse destination events to easily identify all-day vs. timed entries.
+  let parsedDestEvents = destinationEvents.map((destEvent) => {
+    const desc = destEvent.getDescription();
+    const isAllDay = desc.includes("all-day:");
+    let dateStamp = null;
+    if (isAllDay) {
+      const match = desc.match(/all-day:(\d{4}-\d{2}-\d{2})/);
+      if (match) {
+        dateStamp = match[1];
+      }
+    }
+    return {
+      event: destEvent,
+      isAllDay: isAllDay,
+      dateStamp: dateStamp,
+      startTimeMs: destEvent.getStartTime().getTime(),
+      endTimeMs: destEvent.getEndTime().getTime(),
+    };
+  });
 
-    const matchingDestEventIndex = destinationEvents.findIndex(
-      (destEvent) =>
-        destEvent.getStartTime().getTime() === sourceStartTimeMs &&
-        destEvent.getEndTime().getTime() === sourceEndTimeMs
-    );
+  // 3. Reconcile: Find segments to CREATE or UPDATE.
+  allSourceSegments.forEach((sourceSeg) => {
+    const expectedTitle = CALENDAR_NAMES[sourceSeg.sourceCalendarId] || EVENT_TITLE;
+    let matchingDestIndex = -1;
 
-    if (matchingDestEventIndex !== -1) {
+    if (sourceSeg.isAllDay) {
+      // All-Day reconciliation: Match securely using explicit standard date stamps (YYYY-MM-DD)
+      matchingDestIndex = parsedDestEvents.findIndex(
+        (dest) => dest.isAllDay && dest.dateStamp === sourceSeg.dateStamp
+      );
+    } else {
+      // Timed reconciliation: Match via precise millisecond epoch values
+      matchingDestIndex = parsedDestEvents.findIndex(
+        (dest) =>
+          !dest.isAllDay &&
+          dest.startTimeMs === sourceSeg.startTime.getTime() &&
+          dest.endTimeMs === sourceSeg.endTime.getTime()
+      );
+    }
+
+    if (matchingDestIndex !== -1) {
       // A matching event exists. Check if title needs updating, then mark as correctly synced.
-      const destEvent = destinationEvents[matchingDestEventIndex];
-      const expectedTitle = CALENDAR_NAMES[sourceCalendarId] || EVENT_TITLE;
-
-      // Update title if it doesn't match the expected per-calendar title
-      if (destEvent.getTitle() !== expectedTitle) {
-        Logger.log(`UPDATING event title from "${destEvent.getTitle()}" to "${expectedTitle}"`);
-        destEvent.setTitle(expectedTitle);
+      const matched = parsedDestEvents[matchingDestIndex];
+      if (matched.event.getTitle() !== expectedTitle) {
+        Logger.log(
+          `UPDATING event title from "${matched.event.getTitle()}" to "${expectedTitle}"`
+        );
+        matched.event.setTitle(expectedTitle);
         Utilities.sleep(WAIT_TIME);
       }
-
-      // Remove from orphans list (event is correctly synced)
-      destinationEvents.splice(matchingDestEventIndex, 1);
+      // Remove from active list (not an orphan)
+      parsedDestEvents.splice(matchingDestIndex, 1);
     } else {
-      // No matching event found. This is a new or updated event. Create it.
-      const eventTitle = CALENDAR_NAMES[sourceCalendarId] || EVENT_TITLE;
-      Logger.log(`CREATING event at ${sourceEvent.getStartTime()} with title: ${eventTitle}`);
-      destinationCalendar.createEvent(
-        eventTitle,
-        sourceEvent.getStartTime(),
-        sourceEvent.getEndTime(),
-        {
-          description: SYNC_TAG,
-        }
-      );
+      // No matching event found. Create it.
+      if (sourceSeg.isAllDay) {
+        const description = `${SYNC_TAG} | all-day:${sourceSeg.dateStamp}`;
+        Logger.log(
+          `CREATING all-day slot on ${sourceSeg.dateStamp} with title: ${expectedTitle}`
+        );
+        destinationCalendar.createEvent(expectedTitle, sourceSeg.startTime, sourceSeg.endTime, {
+          description: description,
+        });
+      } else {
+        const description = SYNC_TAG;
+        Logger.log(
+          `CREATING timed slot at ${sourceSeg.startTime} to ${sourceSeg.endTime} with title: ${expectedTitle}`
+        );
+        destinationCalendar.createEvent(expectedTitle, sourceSeg.startTime, sourceSeg.endTime, {
+          description: description,
+        });
+      }
       Utilities.sleep(WAIT_TIME);
     }
   });
 
   // 4. Reconcile: Find events to DELETE.
-  // Any events left in destinationEvents are orphans (their source was deleted or changed).
-  destinationEvents.forEach((orphanEvent) => {
-    Logger.log(`DELETING orphaned event at ${orphanEvent.getStartTime()}`);
-    orphanEvent.deleteEvent();
+  // Any events left in parsedDestEvents are orphans (their source was deleted, declined, or changed).
+  parsedDestEvents.forEach((orphan) => {
+    Logger.log(`DELETING orphaned event at ${orphan.event.getStartTime()}`);
+    orphan.event.deleteEvent();
     Utilities.sleep(WAIT_TIME);
   });
 }

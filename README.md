@@ -8,6 +8,9 @@ A Google Apps Script to automatically sync events from multiple source calendars
 *   **Privacy-Focused:** Creates customizable events, hiding original titles, descriptions, and guest lists while showing relevant availability context.
 *   **Per-Calendar Event Naming:** Assigns custom event titles based on the source calendar (e.g., "Personal", "Work", "Class") instead of generic "Busy" titles.
 *   **Automatic Title Updates:** Gradually updates existing event titles to match the new per-calendar naming system without hitting API rate limits.
+*   **Smart Filtering:** Selectively handles all-day events while automatically filtering out event invitations you have explicitly declined (`GuestStatus.NO`), ensuring only genuine commitments block your availability.
+*   **Daily Segment Splitting:** Automatically splits all-day and multi-day timed events into individual daily timed segments. This forces Google Calendar (and third-party scheduling platforms) to display them as busy blocks inside the daily calendar grid rather than as all-day banner events across the top, keeping your hourly grid accurate.
+*   **Unique Handling Matrix:** Reconciles timed events via precise millisecond epoch values and all-day events securely via standard date stamps (`YYYY-MM-DD`) saved inside the event description.
 *   **Robust Reconciliation:** A powerful reconciliation model accurately creates and deletes events, preventing duplicate or orphaned entries.
 *   **Automatic Deletion:** Automatically removes availability blocks when the original event is deleted or its time is changed.
 *   **Manual Event Protection:** Allows you to manually add events to the destination calendar without the script deleting them.
