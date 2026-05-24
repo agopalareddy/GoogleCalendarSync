@@ -197,6 +197,15 @@ function reconcileBatch(startTime, endTime) {
             // Ignore errors if getMyStatus() is not supported (e.g., read-only public import calendars)
           }
 
+          // Filter out events marked as "Free" (Transparent), such as holidays, birthdays, or manually set free times
+          try {
+            if (e.getTransparency() === CalendarApp.EventTransparency.TRANSPARENT) {
+              return;
+            }
+          } catch (err) {
+            // Ignore if getTransparency() is not supported
+          }
+
           const isAllDay = e.isAllDayEvent();
           const startStr = Utilities.formatDate(e.getStartTime(), TIMEZONE, "yyyy-MM-dd");
           const endStr = Utilities.formatDate(e.getEndTime(), TIMEZONE, "yyyy-MM-dd");
