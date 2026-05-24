@@ -424,6 +424,12 @@ function callWithBackoff(operation, maxRetries = 4) {
       const errorMessage = e.message || e.toString();
       const msg = errorMessage.toLowerCase();
       
+      // Handle already-deleted or missing events gracefully
+      if (msg.includes("does not exist") || msg.includes("already been deleted") || msg.includes("not found")) {
+        Logger.log(`[API Warning] Event already deleted on Google's side: ${errorMessage}`);
+        return null;
+      }
+      
       // Google Calendar specific write quota and rate limit patterns
       const isRateLimit = msg.includes('rate limit') || 
                           msg.includes('quota') || 
