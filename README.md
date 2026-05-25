@@ -11,8 +11,8 @@ Keep your scheduling systems (like Calendly, Cal.com, or HubSpot) and colleagues
 ---
 
 ## 📖 **Table of Contents**
-1. [🔄 How It Works (Sync Pipeline)](#-how-it-works-sync-pipeline)
-2. [✨ Key Features](#-key-features)
+1. [✨ Key Features](#-key-features)
+2. [🔄 How It Works (Sync Pipeline)](#-how-it-works-sync-pipeline)
 3. [🚀 Setup Instructions](#-setup-instructions)
     - [Step 1: Create Your Destination Calendar](#step-1-create-your-destination-calendar)
     - [Step 2: Retrieve Your Calendar IDs](#step-2-retrieve-your-calendar-ids)
@@ -27,6 +27,18 @@ Keep your scheduling systems (like Calendly, Cal.com, or HubSpot) and colleagues
 6. [🛠️ Troubleshooting & Google Quotas](#️-troubleshooting--google-quotas)
 7. [🧹 Clean Teardown / Uninstallation](#-clean-teardown--uninstallation)
 8. [📄 License](#-license)
+
+---
+
+## ✨ **Key Features**
+
+*   **🔒 Complete Privacy:** Replaces original titles, description notes, and guest lists with custom, generic availability blocks (e.g., "Personal", "Work", "Class") so no private details leak.
+*   **🧩 Smart Overlap Consolidation:** Automatically merges overlapping or adjacent events from multiple source calendars into a single, clean block. If a "Work" and "Personal" event overlap, the script titles the destination event `Work & Personal` and details the active sources in the description.
+*   **📅 Daily All-Day Splitting:** Automatically converts all-day events and multi-day timed events into individual daily timed segments (`00:00:00` to `23:59:59`). This forces calendar platforms (like Calendly and Cal.com) to block off the entire hourly grid as busy, rather than leaving them as top-banner "all-day" events which are frequently ignored.
+*   **🛡️ Smart Filtering:** Automatically ignores invitations you have explicitly declined (`GuestStatus.NO`) or events marked as "Free/Transparent" (such as automatic holiday calendars, birthdays, or casual notes), ensuring only real commitments block your schedule.
+*   **🔄 Robust Reconciliation:** Uses precise millisecond epoch value checking and metadata tracking saved within event descriptions to dynamically match events. It detects changes instantly and cleanly wipes out orphaned entries when a source event is deleted or moved.
+*   **⏳ Exponential Backoff:** Built-in rate-limit protection automatically retries calendar modifications with randomized jitter when Google's API limits are encountered, optimizing execution speed to under 2 seconds.
+*   **🌐 Dynamic Timezone Awareness:** Automatically reads and matches your primary calendar's IANA timezone settings for perfect date boundary transitions.
 
 ---
 
@@ -47,18 +59,6 @@ graph TD
     G -->|Delete Orphaned / Outdated Slots| H
     H --> I[🏁 Sync Complete]
 ```
-
----
-
-## ✨ **Key Features**
-
-*   **🔒 Complete Privacy:** Replaces original titles, description notes, and guest lists with custom, generic availability blocks (e.g., "Personal", "Work", "Class") so no private details leak.
-*   **🧩 Smart Overlap Consolidation:** Automatically merges overlapping or adjacent events from multiple source calendars into a single, clean block. If a "Work" and "Personal" event overlap, the script titles the destination event `Work & Personal` and details the active sources in the description.
-*   **📅 Daily All-Day Splitting:** Automatically converts all-day events and multi-day timed events into individual daily timed segments (`00:00:00` to `23:59:59`). This forces calendar platforms (like Calendly and Cal.com) to block off the entire hourly grid as busy, rather than leaving them as top-banner "all-day" events which are frequently ignored.
-*   **🛡️ Smart Filtering:** Automatically ignores invitations you have explicitly declined (`GuestStatus.NO`) or events marked as "Free/Transparent" (such as automatic holiday calendars, birthdays, or casual notes), ensuring only real commitments block your schedule.
-*   **🔄 Robust Reconciliation:** Uses precise millisecond epoch value checking and metadata tracking saved within event descriptions to dynamically match events. It detects changes instantly and cleanly wipes out orphaned entries when a source event is deleted or moved.
-*   **⏳ Exponential Backoff:** Built-in rate-limit protection automatically retries calendar modifications with randomized jitter when Google's API limits are encountered, optimizing execution speed to under 2 seconds.
-*   **🌐 Dynamic Timezone Awareness:** Automatically reads and matches your primary calendar's IANA timezone settings for perfect date boundary transitions.
 
 ---
 
