@@ -3,10 +3,13 @@
 [![Google Apps Script](https://img.shields.io/badge/Google%20Apps%20Script-4285F4?style=for-the-badge&logo=google&logoColor=white)](https://script.google.com)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg?style=for-the-badge)](LICENSE)
 [![Version](https://img.shields.io/badge/Version-3.0-green.svg?style=for-the-badge)](Code.gs)
+[![Live Demo](https://img.shields.io/badge/Live_Demo-agopalareddy.github.io-orange?style=for-the-badge&logo=google-chrome&logoColor=white)](https://agopalareddy.github.io/availability/)
 
 A highly robust, privacy-focused Google Apps Script that automatically syncs and consolidates events from multiple source calendars (e.g., Work, Personal, School) into a single **"Availability"** calendar. 
 
 Keep your scheduling systems (like Calendly, Cal.com, or HubSpot) and colleagues perfectly informed of your busy times without exposing any private appointment details.
+
+👉 **[View the Live Availability Demo!](https://agopalareddy.github.io/availability/)**
 
 ---
 
