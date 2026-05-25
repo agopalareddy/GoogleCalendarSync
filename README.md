@@ -1,15 +1,20 @@
 # 📅 **Google Calendar Availability Sync**
 
-[![Google Apps Script](https://img.shields.io/badge/Google%20Apps%20Script-4285F4?style=for-the-badge&logo=google&logoColor=white)](https://script.google.com)
-[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg?style=for-the-badge)](LICENSE)
-[![Version](https://img.shields.io/badge/Version-3.0-green.svg?style=for-the-badge)](Code.gs)
-[![Live Demo](https://img.shields.io/badge/Live_Demo-agopalareddy.github.io-orange?style=for-the-badge&logo=google-chrome&logoColor=white)](https://agopalareddy.github.io/availability/)
+[![Google Apps Script](https://img.shields.io/badge/Google_Apps_Script-4285F4?style=flat-square&logo=google&logoColor=white)](https://script.google.com)
+[![Version](https://img.shields.io/badge/Version-3.0_Stable-10b981?style=flat-square&logo=git&logoColor=white)](Code.gs)
+[![License](https://img.shields.io/badge/License-Apache_2.0-64748b?style=flat-square)](LICENSE)
 
 A highly robust, privacy-focused Google Apps Script that automatically syncs and consolidates events from multiple source calendars (e.g., Work, Personal, School) into a single **"Availability"** calendar. 
 
 Keep your scheduling systems (like Calendly, Cal.com, or HubSpot) and colleagues perfectly informed of your busy times without exposing any private appointment details.
 
-👉 **[View the Live Availability Demo!](https://agopalareddy.github.io/availability/)**
+---
+
+### 🔗 **Live Demo**
+
+Click the button below to view a live demonstration of the synchronized public calendar:
+
+[![Launch Live Demo](https://img.shields.io/badge/-%E2%96%B6_Launch_Live_Demo-a855f7?style=for-the-badge&logo=google-chrome&logoColor=white)](https://agopalareddy.github.io/availability/)
 
 ---
 
