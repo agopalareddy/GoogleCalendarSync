@@ -325,10 +325,8 @@ function reconcileBatch(startTime, endTime) {
     let uniqueNames = [...new Set(names)].sort();
     
     let expectedTitle = uniqueNames.join(' & ') || EVENT_TITLE;
-    let expectedDescription = isAllDay 
-      ? `${SYNC_TAG} | all-day:${dateStamp} | Sources: ${uniqueNames.join(', ')}`
-      : `${SYNC_TAG} | Sources: ${uniqueNames.join(', ')}`;
-      
+    let expectedDescription = `${SYNC_TAG} | ${isAllDay ? `all-day:${dateStamp} | ` : ''}Sources: ${uniqueNames.join(', ')}`;
+
     return { expectedTitle, expectedDescription };
   };
 
